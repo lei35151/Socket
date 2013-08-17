@@ -15,6 +15,7 @@ namespace LL{
 		void connect(const std::string& dbConnString);
 		void query(unsigned long id);
 		void commit(Element& e);
+		void test();
 	private:
 		void WriteToDB(Element& e);
 		std::vector<Element> ReadFromDB();

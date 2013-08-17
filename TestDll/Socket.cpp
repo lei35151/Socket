@@ -12,92 +12,93 @@ using Poco::Net::TCPServerConnectionFactory;
 using Poco::Net::TCPServerConnection;
 using Poco::Net::StreamSocket;
 
+Poco::Event g_eventWriteDB;
+Poco::Mutex g_mutexcopy;
+
 std::string _mydb = "user=root;password=123456;db=mytest;compress=true;auto-reconnect=true;port=3306;host=localhost";
+
+std::vector<LL::Element> RecvElements;
+
+DWORD WINAPI ThreadWriteDB(LPVOID lParam);
 
 class EchoConnection : public TCPServerConnection
 {
 public:
 	EchoConnection(const StreamSocket& s) : TCPServerConnection(s)
 	{
-		m_data = new LL::Data();
-		m_data->connect(_mydb);
+// 		m_data = new LL::Data();
+// 		m_data->connect(_mydb);
+
+		// 打开定时器
+		timer = new Poco::Timer(500, 1000);
+		timer->start(Poco::TimerCallback<EchoConnection>(*this, &EchoConnection::onTime));
 	}
 
-	void run()
-	{
-		LL::Element datagrama;
-
-		// 处理服务端业务流程，接收数据并处理流程
-		StreamSocket& ss = socket();
-		Poco::Net::SocketAddress addr = ss.address();
-		try
-		{
-			char recvbuffer[1024];
-			char sendbuffer[1024];
-			memset(recvbuffer, 0, sizeof(recvbuffer));
-			memset(sendbuffer, 0, sizeof(sendbuffer));
-// 			int n = ss.receiveBytes(recvbuffer, sizeof(recvbuffer));
-// 			std::cout << recvbuffer << std::endl;
-			int n=0;
-
-			while (n>0)/*(n > 0)*/
-			{
-				memset(sendbuffer, 0, sizeof(sendbuffer));
-				sprintf(sendbuffer, "%s","server response!");
-				n = sizeof(sendbuffer);
-				ss.sendBytes(sendbuffer, n);
-
-				memset(recvbuffer, 0, sizeof(recvbuffer));
-				n = ss.receiveBytes(recvbuffer, sizeof(recvbuffer));
-				std::cout << "recv byte:" << recvbuffer << std::endl;
-
-				if (n > 0)
-				{
-					datagrama.index = 1;
-					datagrama.UUID = 2;
-					datagrama.datatype = 3;
-					datagrama.port = 4;
-					datagrama.ip = "000";
-					datagrama.time = "111";
-					datagrama.date = "222";
-					datagrama.module = "333";
-					datagrama.hFun = "444";
-					datagrama.datagram = "555";
-
-					m_data->commit(datagrama);
-				}
-
-// 				if (n > 0)
-// 				{
-// 					datagrama.index = 1;
-// 					datagrama.UUID = 2;
-// 					datagrama.datatype = 3;
-// 					datagrama.port = 4;
-// 					datagrama.ip = "000";
-// 					datagrama.time = "111";
-// 					datagrama.date = "222";
-// 					datagrama.module = "333";
-// 					datagrama.hFun = "444";
-// 					datagrama.datagram = "555";
-// 
-// 					m_data->commit(datagrama);
-// 
-// 					memset(sendbuffer, 0, sizeof(sendbuffer));
-// 					sprintf(sendbuffer, "%s","server response!");
-// 					n = sizeof(sendbuffer);
-// 					ss.sendBytes(sendbuffer, n);
-// 				}
-			}
-		}
-		catch (Poco::Exception& exc)
-		{
-			std::cerr << "EchoConnection: " << exc.displayText() << std::endl;
-		}
-	}
-
+	void run();
+	
 private:
+	void onTime(Poco::Timer& t);
+	void saveRevDataInQueue(char* revdata);
+
 	LL::Data* m_data;
+	Poco::Timer *timer;
 };
+
+void EchoConnection::onTime(Poco::Timer& t)
+{
+	g_eventWriteDB.set();
+}
+
+void EchoConnection::run()
+{
+	// 处理服务端业务流程，接收数据并处理流程
+	StreamSocket& ss = socket();
+	try
+	{
+		char buffer[1024];
+		int n = ss.receiveBytes(buffer, sizeof(buffer));
+		saveRevDataInQueue(buffer);
+
+		while (n > 0)
+		{
+			sprintf(buffer, "%s","server response!");
+			n = strlen(buffer);
+			ss.sendBytes(buffer, n);
+
+			if (RecvElements.size() > 500)
+			{
+				g_eventWriteDB.set();
+			}
+
+			n = ss.receiveBytes(buffer, sizeof(buffer));
+			saveRevDataInQueue(buffer);
+		}
+	}
+	catch (Poco::Exception& exc)
+	{
+		std::cerr << "EchoConnection: " << exc.displayText() << std::endl;
+	}
+}
+
+void EchoConnection::saveRevDataInQueue(char* revdata)
+{
+	LL::Element datagrama;
+
+	datagrama.index = 1;
+	datagrama.UUID = 2;
+	datagrama.datatype = 3;
+	datagrama.port = 4;
+	datagrama.ip = "000";
+	datagrama.time = "111";
+	datagrama.date = "222";
+	datagrama.module = "333";
+	datagrama.hFun = "444";
+	datagrama.datagram = "555";
+
+	g_mutexcopy.lock();
+	RecvElements.push_back(datagrama);
+	g_mutexcopy.unlock();
+}
 
 CSocket::CSocket(NETSTAT netType, int port, const std::string& addr)
 {
@@ -129,6 +130,8 @@ void CSocket::initService(int port)
 
 void CSocket::Start()
 {
+	// 创建线程，用于将接收数据写入数据库
+	CreateThread(NULL, 0, ThreadWriteDB, NULL, 0, NULL);
 	// 启动服务
 	srv->start();
 
@@ -146,4 +149,43 @@ void CSocket::initClient(const std::string& addr, int port)
 void CSocket::senddata(const std::string& datagram)
 {
 
+}
+
+DWORD WINAPI ThreadWriteDB(LPVOID lParam)
+{
+	LL::Data* m_data = new LL::Data();
+	m_data->connect(_mydb);
+
+	std::vector<LL::Element> RecvStation;
+	while(true)
+	{
+		g_eventWriteDB.wait();
+
+		// 存入临时缓冲，避免socket阻塞
+		g_mutexcopy.lock();
+		if (RecvElements.size() > 0  )
+		{
+			for (int i=0; i<RecvElements.size(); i++)
+			{
+				RecvStation.push_back(RecvElements[i]);
+			}
+
+			RecvElements.clear();
+		}
+		g_mutexcopy.unlock();
+
+		// 缓冲写数据库
+		LL::Element element;
+		for (int j=0; j<RecvStation.size(); j++)
+		{
+			element = RecvStation[j];
+			m_data->commit(element);
+		}
+
+		RecvStation.clear();
+
+		g_eventWriteDB.reset();
+	}
+
+	return 0;
 }

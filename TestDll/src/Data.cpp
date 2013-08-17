@@ -7,6 +7,7 @@ using namespace Poco::Data;
 #include "Poco/Data/MySQL/MySQLException.h"
 #include "Poco/Data/SessionFactory.h"
 #include "Poco/Mutex.h"
+#include <vector>
 
 using namespace Poco::Data;
 using Poco::format;
@@ -17,18 +18,7 @@ Poco::SharedPtr<Poco::Data::Session> Data::_pSession = 0;
 using Poco::TimerCallback;
 
 Poco::Mutex m_Mutex;
-/*
-unsigned int	index;
-unsigned int	UUID;
-unsigned short	datatype;	//数据包类型，发送/接收
-unsigned short	port;		//65535
-std::string		ip;
-std::string		time;		//时间
-std::string		date;		//日期
-std::string		module;		//模块
-str::string		hFun;		//获取函数
-str::string		datagram;	//数据报
-*/
+
 
 namespace Poco {
 namespace Data {
@@ -71,7 +61,7 @@ public:
 
 	static std::size_t size()
 	{
-		return 6;
+		return 10;
 	}
 
 	static void extract(std::size_t pos, Element& obj, const Element& defVal, AbstractExtractor* pExt)
@@ -147,7 +137,7 @@ void Data::connect(const std::string& dbConnString)
 	}
 
 	// 打开定时器
-	timer = new Poco::Timer(250, 500);
+	timer = new Poco::Timer(500, 1000);
 	timer->start(TimerCallback<Data>(*this, &Data::onTime));
 }
 
@@ -188,11 +178,13 @@ void Data::WriteToDB(Element& e)
 	createTable();
 
 	// 数据写入数据库
-	if (!_pSession)
+	if (NULL == !_pSession)
 	{
 		try 
 		{
-			*_pSession << "INSERT INTO Data VALUES (?,?,?,?,?,?,?,?,?,?)", use(elements), now; 
+			_pSession->begin();
+			*_pSession << "INSERT NetData VALUES (?,?,?,?,?,?,?,?,?,?)", use(elements), now; 
+			_pSession->commit();
 		}
 		catch(ConnectionException& ce)
 		{ 
@@ -242,12 +234,16 @@ void Data::onTime(Poco::Timer& t)
 		if (NULL != _pSession)
 		{
 			m_Mutex.lock();
+
 			// 判断表是否存在,如果不存在创建
 			createTable();
 
 			try 
 			{
+				_pSession->begin();
 				*_pSession << "INSERT NetData VALUES (?,?,?,?,?,?,?,?,?,?)", use(elements), now; 
+				_pSession->commit();
+
 			}
 			catch(ConnectionException& ce)
 			{ 
@@ -299,4 +295,45 @@ void Data::dropTable(const std::string& tableName)
 	{
 		std::cout << exc.displayText() << std::endl;
 	}
+}
+
+void Data::test()
+{
+	LL::Element datagrama;
+	std::vector<LL::Element> ve;
+
+	for (int l=0; l<20000; l++)
+	{
+		datagrama.index = 1;
+		datagrama.UUID = 2;
+		datagrama.datatype = 3;
+		datagrama.port = 4;
+		datagrama.ip = "000";
+		datagrama.time = "111";
+		datagrama.date = "222";
+		datagrama.module = "333";
+		datagrama.hFun = "444";
+		datagrama.datagram = "555";
+
+		ve.push_back(datagrama);
+	}
+	
+
+	int start = time(NULL);
+	LL::Element e;
+	_pSession->begin();
+
+// 	Statement stmt(*_pSession);
+// 	stmt << "INSERT INTO NetData VALUES (?,?,?,?,?,?,?,?,?,?)", use(e);//, now;  
+// 	for (std::vector<LL::Element>::const_iterator it=ve.begin(), en = ve.end(); it!=en; ++it)
+// 	{
+// 		e = *it;
+// 		stmt.execute();
+// 	}
+
+	*_pSession << "INSERT NetData VALUES (?,?,?,?,?,?,?,?,?,?)", use(ve), now; 
+
+	_pSession->commit();
+	int end = time(NULL);
+	end = end - start;
 }
