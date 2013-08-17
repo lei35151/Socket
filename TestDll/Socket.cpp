@@ -56,6 +56,7 @@ void EchoConnection::run()
 	try
 	{
 		char buffer[1024];
+		memset(buffer, 0, sizeof(buffer));
 		int n = ss.receiveBytes(buffer, sizeof(buffer));
 		saveRevDataInQueue(buffer);
 
@@ -70,6 +71,7 @@ void EchoConnection::run()
 				g_eventWriteDB.set();
 			}
 
+			memset(buffer, 0, sizeof(buffer));
 			n = ss.receiveBytes(buffer, sizeof(buffer));
 			saveRevDataInQueue(buffer);
 		}
@@ -80,10 +82,36 @@ void EchoConnection::run()
 	}
 }
 
+//×Ö·û´®·Ö¸îº¯Êý
+std::vector<std::string> splitrecvdata(std::string str,std::string pattern)
+{
+	std::string::size_type pos;
+	std::vector<std::string> result;
+	str+=pattern;//À©Õ¹×Ö·û´®ÒÔ·½±ã²Ù×÷
+	int size=str.size();
+
+	for(int i=0; i<size; i++)
+	{
+		pos=str.find(pattern,i);
+		if(pos<size)
+		{
+			std::string s=str.substr(i,pos-i);
+			result.push_back(s);
+			i=pos+pattern.size()-1;
+		}
+	}
+	return result;
+}
+
 void EchoConnection::saveRevDataInQueue(char* revdata)
 {
-	LL::Element datagrama;
+	std::vector<std::string> res;
+	std::string separator = "||";
+	std::string strRecvdata(revdata);
 
+	res = splitrecvdata(strRecvdata, separator);
+
+	LL::Element datagrama;
 	datagrama.index = 1;
 	datagrama.UUID = 2;
 	datagrama.datatype = 3;
